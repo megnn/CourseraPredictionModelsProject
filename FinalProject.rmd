@@ -1,0 +1,161 @@
+---
+title: "Prediction Model"
+output: html_document
+---
+
+##Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+
+
+##Loading Data 
+
+Below I load the data and cache this section in order to limit time in re-running the code. 
+
+```{r, cache=TRUE, message=FALSE,warning=FALSE }
+
+
+library(caret)
+library(rpart)
+library(randomForest)
+library(knitr)
+
+training_data <- read.csv("~/data/Coursera/PredictionModels/pml-training.csv")
+
+testing_data <- read.csv("~/data/Coursera/PredictionModels/pml-testing.csv")
+
+
+```
+
+## Data Pre-Processing
+
+Much of the code is preprocessing, to clean the data of extraneous variables and match the style of the training and testing sets. I removed variables that were near zero variance to others and offered nothing but noise to the final model. I also pulled variables that had more than 60% NAs.
+
+```{r, message=FALSE,warning=FALSE }
+
+library(caret)
+library(rpart)
+library(randomForest)
+library(knitr)
+
+
+#Segment into True Training and Partial Testing Data
+#60% of training is 
+
+inTrain <- createDataPartition(y = training_data$classe, p = .7, list = FALSE)
+sub_training <- training_data[inTrain,]
+test_training <- training_data[-inTrain,]
+
+
+#Preprocess data, training and test
+
+#First remove near zero variance variables. These will add little to final prediciton and gum up works
+near_zero <- nearZeroVar(sub_training, saveMetrics = TRUE)
+sub_training <- sub_training[ ,near_zero$nzv == FALSE]
+test_training <- test_training[,near_zero$nzv == FALSE]
+#Now the training data has removed 56 variables, left with 104
+
+#Remove the first column of the test_training data set
+sub_training <- sub_training[c(-1)]
+
+#Clean variables with more than 60% NA
+
+trainingV3 <- sub_training
+for(i in 1:length(sub_training)) {
+  if( sum( is.na( sub_training[, i] ) ) /nrow(sub_training) >= .7) {
+    for(j in 1:length(trainingV3)) {
+      if( length( grep(names(sub_training[i]), names(trainingV3)[j]) ) == 1)  {
+        trainingV3 <- trainingV3[ , -j]
+      }   
+    } 
+  }
+}
+
+# Set back to the original variable name
+sub_training <- trainingV3
+rm(trainingV3)
+
+#Transform the sub_training and testing data sets
+clean1 <- colnames(sub_training)
+clean2 <- colnames(sub_training[, -58])  # remove the classe column
+test_training <- test_training[clean1]
+# allow only variables in test_training that are also in sub_training
+testing_data <- testing_data[clean2]             
+# allow only variables in testing that are also in sub_training
+
+dim(test_training)
+
+
+for (i in 1:length(testing_data) ) {
+  for(j in 1:length(sub_training)) {
+    if( length( grep(names(sub_training[i]), names(testing_data)[j]) ) == 1)  {
+      class(testing_data[j]) <- class(sub_training[i])
+    }      
+  }      
+}
+
+# To get the same class between testing_data and sub_training
+testing_data <- rbind(sub_training[2, -58] , testing_data)
+testing_data <- testing_data[-1,]
+
+```
+
+
+#Random Forests
+
+Below I use a random forest prediction model to predict the class.
+
+```{r, message=FALSE,warning=FALSE}
+library(caret)
+library(rpart)
+library(randomForest)
+library(knitr)
+
+set.seed(6825)
+modFitB1 <- randomForest(classe ~ ., data=sub_training)
+predictionB1 <- predict(modFitB1, test_training, type = "class")
+cmrf <- confusionMatrix(predictionB1, test_training$classe)
+cmrf
+plot(modFitB1)
+
+plot(cmrf$table, col = cmrf$byClass, main = paste("Random Forest Confusion Matrix: Accuracy =", round(cmrf$overall['Accuracy'], 4)))
+```
+
+##GBM
+
+In the below segment, I use a generalized boosting model to predict the class in the training subset.
+
+```{r, message=FALSE,warning=FALSE}
+
+library(caret)
+library(rpart)
+library(randomForest)
+library(knitr)
+
+
+set.seed(6381)
+fitControl <- trainControl(method = "repeatedcv",
+                           number = 5,
+                           repeats = 1)
+
+gbmFit1 <- train(classe ~ ., data=sub_training, method = "gbm",
+                 trControl = fitControl,
+                 verbose = FALSE)
+
+
+gbmFinMod1 <- gbmFit1$finalModel
+
+gbmPredTest <- predict(gbmFit1, newdata=test_training)
+gbmAccuracyTest <- confusionMatrix(gbmPredTest, test_training$classe)
+gbmAccuracyTest
+
+plot(gbmFit1, ylim=c(0.9, 1))
+
+```
+
+##Conclusion
+
+Both random forest models and boosting models fit the data well, generalized boosting, in general was less specific and sensitive in correctly predicting the data than the random forest model with balanced accuracy ranging from 99.55% to 99.93% while Random Forest had a range of 99.86%  to 99.94% . Both were excellent prediction models for the data.
+
+
